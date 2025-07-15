@@ -235,6 +235,17 @@
             to { transform: rotate(360deg); }
         }
 
+        .info-box {
+            background: rgba(118, 75, 162, 0.1);
+            border: 1px solid rgba(118, 75, 162, 0.3);
+            border-radius: 8px;
+            padding: 12px 16px;
+            margin-top: 20px;
+            font-size: 13px;
+            color: #764ba2;
+            line-height: 1.5;
+        }
+
         /* 모바일 최적화 */
         @media (max-width: 480px) {
             .login-container {
@@ -305,6 +316,14 @@
         <p class="footer-text">
             등록된 강사/코디만 로그인할 수 있습니다
         </p>
+
+        <div class="info-box" id="devInfo" style="display: none;">
+            <strong>📋 테스트 계정</strong>
+            이름: 강경화, 전화: 010-1234-0368<br>
+            이름: 강문석, 전화: 010-1234-8108<br>
+            이름: 강민주, 전화: 010-1234-9916<br>
+            이름: 강보람, 전화: 010-1234-3332
+        </div>
     </div>
 
     <script>
@@ -312,7 +331,21 @@
         const CONFIG = {
             GOOGLE_SCRIPT_URL: 'https://script.google.com/macros/s/AKfycbyOpO-31SvmD1q015BiDgO8XWYXyID4AY4dMPnfqsBa9E2163pNt0SyXkfpFPjCfkc5yQ/exec',
             APPSHEET_APP_ID: '2f96b76f-5cea-4f06-aa43-30913dbdb1f5',
-            DEV_MODE: false
+            DEV_MODE: false  // true로 변경하면 테스트 계정 정보 표시
+        };
+
+        // 개발 모드 표시
+        if (CONFIG.DEV_MODE) {
+            document.getElementById('devInfo').style.display = 'block';
+        }
+
+        // ===== 사용자 CID 매핑 (엑셀 데이터 기반) =====
+        const USER_CID_MAP = {
+            '강경화_010-1234-0368': 'KN001',
+            '강문석_010-1234-8108': 'KN002',
+            '강민주_010-1234-9916': 'KN003',
+            '강보람_010-1234-3332': 'KN004',
+            // 필요에 따라 더 많은 사용자 추가
         };
 
         // ===== 유틸리티 함수들 =====
@@ -370,19 +403,13 @@
                 console.log('POST 시도:', error);
             }
             
-            // 대신 GET 요청으로 팝업 열기
+            // GET 요청으로 팝업 열기
             const url = CONFIG.GOOGLE_SCRIPT_URL + 
                 '?action=login' +
                 '&name=' + encodeURIComponent(name) +
                 '&phone=' + encodeURIComponent(phone);
             
             const popup = window.open(url, 'login', 'width=500,height=400,left=200,top=200');
-            
-            // 팝업이 차단된 경우
-            if (!popup || popup.closed) {
-                console.log('팝업 차단됨, 직접 진행');
-                // 팝업 없이도 진행
-            }
             
             // 3초 대기
             await new Promise(resolve => setTimeout(resolve, 3000));
@@ -392,11 +419,25 @@
                 popup.close();
             }
             
+            // CID 찾기 - 매핑 테이블 사용
+            const lookupKey = `${name}_${phone}`;
+            let userId = USER_CID_MAP[lookupKey];
+            
+            // 매핑이 없으면 기본값 생성
+            if (!userId) {
+                console.log('⚠️ CID 매핑을 찾을 수 없음:', lookupKey);
+                // 기본 CID 생성 로직
+                const phoneLastFour = phone.slice(-4);
+                userId = `TEMP_${name}_${phoneLastFour}`;
+            }
+            
+            console.log('✅ 사용할 CID:', userId);
+            
             // 성공으로 간주
             return {
                 success: true,
                 data: {
-                    userId: name.substring(0, 2).toUpperCase() + phone.slice(-4),
+                    userId: userId,  // 올바른 CID
                     name: name,
                     phone: phone,
                     activity: '강사'
@@ -408,16 +449,22 @@
         function redirectToAppSheet(userData) {
             console.log('🚀 AppSheet 리다이렉트:', userData);
             
+            // URL 파라미터 생성 - userId와 name, phone 모두 전달
             const params = new URLSearchParams({
-                userId: userData.userId,
-                name: userData.name,
-                phone: userData.phone,
-                t: Date.now()
+                userId: userData.userId,  // CID (예: KN004)
+                name: userData.name,      // 성명
+                phone: userData.phone,    // 전화번호
+                t: Date.now()            // 캐시 방지
             });
             
             const appSheetUrl = `https://www.appsheet.com/start/${CONFIG.APPSHEET_APP_ID}?${params}`;
             
             console.log('📍 이동 URL:', appSheetUrl);
+            
+            // 디버깅용 - 개발 모드에서만 표시
+            if (CONFIG.DEV_MODE) {
+                alert(`AppSheet로 이동합니다!\n\nCID: ${userData.userId}\n이름: ${userData.name}\nURL: ${appSheetUrl}`);
+            }
             
             setTimeout(() => {
                 window.location.href = appSheetUrl;
@@ -469,31 +516,62 @@
                 // 서버 로그인 요청 (CORS 우회)
                 const result = await loginToServer(name, phone);
                 
-                console.log('✅ 로그인 성공!');
-                showAlert('로그인 성공! 잠시 후 이동합니다...', 'success');
-                
-                // AppSheet로 리다이렉트
-                redirectToAppSheet(result.data);
+                if (result.success) {
+                    console.log('✅ 로그인 성공!');
+                    showAlert('로그인 성공! 잠시 후 이동합니다...', 'success');
+                    
+                    // AppSheet로 리다이렉트
+                    redirectToAppSheet(result.data);
+                } else {
+                    console.log('❌ 로그인 실패');
+                    showAlert(result.error || '로그인에 실패했습니다.', 'error');
+                    submitBtn.innerHTML = originalText;
+                    submitBtn.disabled = false;
+                }
                 
             } catch (error) {
                 console.error('💥 로그인 처리 오류:', error);
-                showAlert('로그인 처리 중 오류가 발생했습니다.');
+                showAlert('로그인 처리 중 오류가 발생했습니다.', 'error');
                 submitBtn.innerHTML = originalText;
                 submitBtn.disabled = false;
             }
         });
 
-        // ===== 디버깅 =====
+        // ===== 디버깅 도구 =====
         
+        // 페이지 로드 시 설정 확인
         console.log('🎯 강사 로그인 시스템 준비 완료');
-        console.log('📋 설정값:', CONFIG);
+        console.log('📋 설정값:', {
+            GOOGLE_SCRIPT_URL: CONFIG.GOOGLE_SCRIPT_URL,
+            APPSHEET_APP_ID: CONFIG.APPSHEET_APP_ID,
+            DEV_MODE: CONFIG.DEV_MODE
+        });
         
-        // 테스트 함수
-        window.testDirectAccess = function() {
-            const url = `https://www.appsheet.com/start/${CONFIG.APPSHEET_APP_ID}`;
-            console.log('AppSheet 직접 접근:', url);
+        // 디버깅용 함수들
+        window.debugInfo = function() {
+            console.log('===== 디버그 정보 =====');
+            console.log('설정:', CONFIG);
+            console.log('사용자 매핑:', USER_CID_MAP);
+            console.log('===================');
+        };
+        
+        window.testDirectAccess = function(userId = 'KN001') {
+            const url = `https://www.appsheet.com/start/${CONFIG.APPSHEET_APP_ID}?userId=${userId}`;
+            console.log('직접 접근 테스트:', url);
             window.open(url, '_blank');
         };
+        
+        window.addUserMapping = function(name, phone, cid) {
+            const key = `${name}_${phone}`;
+            USER_CID_MAP[key] = cid;
+            console.log(`✅ 사용자 매핑 추가: ${key} → ${cid}`);
+        };
+        
+        // 초기 안내
+        console.log('💡 디버깅 명령어:');
+        console.log('- debugInfo(): 현재 설정 확인');
+        console.log('- testDirectAccess("KN001"): 직접 접근 테스트');
+        console.log('- addUserMapping("이름", "010-1234-5678", "CID"): 사용자 매핑 추가');
     </script>
 </body>
 </html>
